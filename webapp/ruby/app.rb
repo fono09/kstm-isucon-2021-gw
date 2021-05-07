@@ -73,10 +73,6 @@ class Ishocon1::WebApp < Sinatra::Base
       redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id]} : nil
     end
 
-    def update_last_login(user_id)
-      db.xquery('UPDATE users SET last_login = ? WHERE id = ?', time_now_db, user_id)
-    end
-
     def buy_product(product_id, user_id)
       db.xquery('INSERT INTO histories (product_id, user_id, created_at) VALUES (?, ?, ?)', \
         product_id, user_id, time_now_db)
@@ -111,7 +107,6 @@ class Ishocon1::WebApp < Sinatra::Base
 
   post '/login' do
     authenticate(params['email'], params['password'])
-    update_last_login(current_user[:id])
     redirect '/'
   end
 
