@@ -120,6 +120,7 @@ class Ishocon1::WebApp < Sinatra::Base
   end
 
   get '/' do
+    cache_control :public
     page = params[:page].to_i || 0
     limit = 50
 
@@ -177,6 +178,7 @@ SQL
   end
 
   get '/users/:user_id' do
+    cache_control :public
     products_query = <<SQL
 SELECT p.id, p.name, p.description, p.image_path, p.price, h.created_at
 FROM histories as h
@@ -197,6 +199,7 @@ SQL
   end
 
   get '/products/:product_id' do
+    cache_control :public
     product = db.xquery('SELECT * FROM products WHERE id = ?', params[:product_id]).first
     comments = db.xquery('SELECT * FROM comments WHERE product_id = ?', params[:product_id])
     erb :product, locals: { product: product, comments: comments }
