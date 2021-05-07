@@ -21,6 +21,7 @@ class Ishocon1::WebApp < Sinatra::Base
   PRD_MAX_ID = 10000
 
   USER_ID_KEY_PREFIX = 'user_id_'
+  USER_BOUGHT_PREFIX = 'user_bought_'
   PRODUCT_COMMENTS_COUNT_PREFIX = 'product_comments_count_'
 
   helpers do
@@ -77,15 +78,14 @@ class Ishocon1::WebApp < Sinatra::Base
     end
 
     def buy_product(product_id, user_id)
+      redis.hincrby("#{USER_BOUGHT_PREFIX}#{user_id}", product_id, 1)
       db.xquery('INSERT INTO histories (product_id, user_id, created_at) VALUES (?, ?, ?)', \
         product_id, user_id, time_now_db)
     end
 
     def already_bought?(product_id)
       return false unless current_user
-      count = db.xquery('SELECT count(*) as count FROM histories WHERE product_id = ? AND user_id = ?', \
-                        product_id, current_user[:id]).first[:count]
-      count > 0
+      redis.hexists("#{USER_BOUGHT_PREFIX}#{current_user[:id]}", product_id)
     end
 
     def create_comment(product_id, user_id, content)
@@ -215,6 +215,21 @@ SQL
   end
 
   get '/initialize' do
+    keys = redis.keys("#{USER_ID_KEY_PREFIX}*")
+    keys.each do |key|
+      redis.del(key)
+    end
+
+    keys = redis.keys("#{USER_BOUGHT_PREFIX}*")
+    keys.each do |key|
+      redis.del(key)
+    end
+
+    keys = redis.keys("#{PRODUCT_COMMENTS_COUNT_PREFIX}*")
+    keys.each do |key|
+      redis.del(key)
+    end
+
     db.query('DELETE FROM users WHERE id > 5000')
     db.query('DELETE FROM products WHERE id > 10000')
     db.query('DELETE FROM comments WHERE id > 200000')
@@ -233,6 +248,24 @@ SQL
     product_comments_count = db.query(pcc_query)
     product_comments_count.each do |pcc|
       redis.set("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{pcc[:product_id]}", pcc[:cnt])
+    end
+
+    bought_query =<<SQL
+SELECT
+  user_id,
+  product_id,
+  count(*) as count
+FROM histories
+GROUP BY 1,2
+HAVING count > 0
+SQL
+    bought_count = db.xquery(bought_query)
+    bought_count.each do |bought|
+      redis.hset(
+        "#{USER_BOUGHT_PREFIX}#{bought[:user_id]}",
+        bought[:product_id],
+        bought[:count]
+      )
     end
 
     "Finish"
