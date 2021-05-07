@@ -4,7 +4,6 @@
 .bundle/
 .cache/
 .gem/
-.init/
 .ivy2/
 .mysql_history
 .profile
