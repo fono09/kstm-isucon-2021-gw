@@ -18,6 +18,8 @@ class Ishocon1::WebApp < Sinatra::Base
   set :public_folder, File.expand_path('../public', __FILE__)
   set :protection, true
 
+  PRD_MAX_ID = 10000
+
   USER_ID_KEY_PREFIX = 'user_id_'
   PRODUCT_COMMENTS_COUNT_PREFIX = 'product_comments_count_'
 
@@ -121,7 +123,6 @@ class Ishocon1::WebApp < Sinatra::Base
     page = params[:page].to_i || 0
     limit = 50
 
-    prd_max_id = db.xquery("SELECT MAX(id) AS id FROM products").first[:id].to_i
     
     prd_query = <<SQL
 SELECT
@@ -137,8 +138,8 @@ WHERE id > ?
 ORDER BY id DESC
 SQL
     product_rows = db.xquery(prd_query, 
-      prd_max_id - ((page + 1) * limit),
-      prd_max_id - (page * limit),
+      PRD_MAX_ID - ((page + 1) * limit),
+      PRD_MAX_ID - (page * limit),
     )
 
     product_ids = product_rows.map {|elem| elem[:id]}
