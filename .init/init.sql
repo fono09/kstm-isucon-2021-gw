@@ -37,5 +37,6 @@ CREATE TABLE `histories` (
   `product_id` int(11) NOT NULL,
   `user_id` int(11) NOT NULL,
   `created_at` datetime NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  INDEX(`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
