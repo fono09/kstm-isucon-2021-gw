@@ -15,3 +15,17 @@
 .wget-hsts
 benchmark
 gocode/
+
+.antigen/
+.anyenv/
+.config/
+.githooks/
+.gitmodules
+.vim/
+.vimrc
+.zcompdump
+.zsh/
+.zsh_history
+.zshrc
+.zshrc.zwc
+README.md
