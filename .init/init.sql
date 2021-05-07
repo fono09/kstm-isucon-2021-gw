@@ -29,7 +29,8 @@ CREATE TABLE `comments` (
   `user_id` int(11) NOT NULL,
   `content` varchar(128) NOT NULL,
   `created_at` datetime NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  INDEX (`product_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `histories` (
