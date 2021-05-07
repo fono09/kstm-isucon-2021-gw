@@ -22,6 +22,11 @@ class Ishocon1::WebApp < Sinatra::Base
 
   USER_ID_KEY_PREFIX = 'user_id_'
   USER_BOUGHT_PREFIX = 'user_bought_'
+
+  PRODUCT_LATEST_COMMENTS_PREFIX = 'product_latest_comments_'
+  PRODUCT_LATEST_COMMENTS_KEY_NAME = 'name'
+  PRODUCT_LATEST_COMMENTS_KEY_CONTENT = 'content'
+
   PRODUCT_COMMENTS_COUNT_PREFIX = 'product_comments_count_'
 
   helpers do
@@ -67,6 +72,7 @@ class Ishocon1::WebApp < Sinatra::Base
       user = db.xquery('SELECT * FROM users WHERE email = ?', email).first
       fail Ishocon1::AuthenticationError unless user.nil? == false && user[:password] == password
       session[:user_id] = user[:id]
+      session[:user_name] = user[:name]
     end
 
     def authenticated!
@@ -74,7 +80,7 @@ class Ishocon1::WebApp < Sinatra::Base
     end
 
     def current_user
-      redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id]} : nil
+      redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id], name: session[:user_name]} : nil
     end
 
     def buy_product(product_id, user_id)
@@ -88,10 +94,24 @@ class Ishocon1::WebApp < Sinatra::Base
       redis.hexists("#{USER_BOUGHT_PREFIX}#{current_user[:id]}", product_id)
     end
 
-    def create_comment(product_id, user_id, content)
-      redis.incr("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{product_id}")
-      db.xquery('INSERT INTO comments (product_id, user_id, content, created_at) VALUES (?, ?, ?, ?)', \
-        product_id, user_id, content, time_now_db)
+    def create_comment(product_id, user_id, user_name, content)
+      redis.multi do |multi|
+        multi.incr("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{product_id}")
+        (3..0).each do |index|
+          multi.rename(
+            "#{PRODUCT_LATEST_COMMENTS_PREFIX}#{product_id}_#{index}",
+            "#{PRODUCT_LATEST_COMMENTS_PREFIX}#{product_id}_#{index+1}"
+          )
+        end
+        multi.hset(
+          "#{PRODUCT_LATEST_COMMENTS_PREFIX}#{product_id}_0",
+          PRODUCT_LATEST_COMMENTS_KEY_NAME,
+          user_name,
+          PRODUCT_LATEST_COMMENTS_KEY_CONTENT,
+          content
+        )
+      end
+      db.xquery('INSERT INTO comments (product_id, user_id, content, created_at) VALUES (?, ?, ?, ?)', product_id, user_id, content, time_now_db)
     end
   end
 
@@ -147,32 +167,24 @@ SQL
     pcc_key = product_ids.map do |id|
       "#{PRODUCT_COMMENTS_COUNT_PREFIX}#{id}"
     end
-    comment_counts = redis.mget(*pcc_key)
+
+    
+    comments = {}
+    comment_counts = []
+      comment_counts = redis.mget(*pcc_key)
+      product_comments = product_ids.map do |product_id|
+        comment_list = []
+        (0..4).each do |index|
+          result = redis.hgetall("#{PRODUCT_LATEST_COMMENTS_PREFIX}#{product_id}_#{index}")
+          comment_list.push({name: result["name"], content: result["content"]})
+        end
+      comments[product_id] = comment_list
+    end
 
     products = (product_rows.zip(comment_counts)).map do |elem|
       elem[0][:comments_count] = elem[1]
       elem[0]
     end
-    cmt_query = <<SQL
-SELECT product_id, name, content 
-FROM 
-(
-  SELECT c2.id
-  FROM
-  (
-    SELECT ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at DESC) AS row_num, id
-    FROM comments as c
-    WHERE c.product_id IN (?)
-    ORDER BY c.created_at DESC
-  ) AS c2
-  WHERE row_num < 6 
-) AS c3
-JOIN comments AS c4
-  ON c3.id = c4.id
-JOIN users as u
-  ON c4.user_id = u.id
-SQL
-    comments = db.xquery(cmt_query, product_ids).group_by{|cmt| cmt[:product_id]}
 
     erb :index, locals: { products: products, comments: comments}
   end
@@ -213,12 +225,13 @@ SQL
 
   post '/comments/:product_id' do
     authenticated!
-    create_comment(params[:product_id], current_user[:id], params[:content])
+    result = create_comment(params[:product_id], current_user[:id], current_user[:name], params[:content])
     redirect "/users/#{current_user[:id]}"
   end
 
   get '/initialize' do
     redis.flushall
+
 
     db.query('DELETE FROM users WHERE id > 5000')
     db.query('DELETE FROM products WHERE id > 10000')
@@ -255,6 +268,35 @@ SQL
         "#{USER_BOUGHT_PREFIX}#{bought[:user_id]}",
         bought[:product_id],
         bought[:count]
+      )
+    end
+
+    cmt_query = <<SQL
+SELECT product_id, (row_num - 1) AS `index`, name, content 
+FROM 
+(
+  SELECT c2.id, row_num
+  FROM
+  (
+    SELECT ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at DESC) AS row_num, id
+    FROM comments as c
+    ORDER BY c.created_at DESC
+  ) AS c2
+  WHERE row_num < 6 
+) AS c3
+JOIN comments AS c4
+  ON c3.id = c4.id
+JOIN users as u
+  ON c4.user_id = u.id
+SQL
+    latest_comments = db.xquery(cmt_query)
+    latest_comments.each do |comment|
+       redis.hset(
+        "#{PRODUCT_LATEST_COMMENTS_PREFIX}#{comment[:product_id]}_#{comment[:index]}",
+        PRODUCT_LATEST_COMMENTS_KEY_NAME,
+        comment[:name],
+        PRODUCT_LATEST_COMMENTS_KEY_CONTENT,
+        comment[:content]
       )
     end
 
