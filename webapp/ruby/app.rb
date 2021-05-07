@@ -2,6 +2,7 @@ require 'sinatra/base'
 require 'mysql2'
 require 'mysql2-cs-bind'
 require 'erubis'
+require 'rack/lineprof'
 
 module Ishocon1
   class AuthenticationError < StandardError; end
@@ -11,6 +12,7 @@ end
 class Ishocon1::WebApp < Sinatra::Base
   session_secret = ENV['ISHOCON1_SESSION_SECRET'] || 'showwin_happy'
   use Rack::Session::Cookie, key: 'rack.session', secret: session_secret
+  use Rack::Lineprof
   set :erb, escape_html: true
   set :public_folder, File.expand_path('../public', __FILE__)
   set :protection, true
