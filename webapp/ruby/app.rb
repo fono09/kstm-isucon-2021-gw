@@ -19,6 +19,7 @@ class Ishocon1::WebApp < Sinatra::Base
   set :protection, true
 
   USER_ID_KEY_PREFIX = 'user_id_'
+  PRODUCT_COMMENTS_COUNT_PREFIX = 'product_comments_count_'
 
   helpers do
     def config
@@ -86,6 +87,7 @@ class Ishocon1::WebApp < Sinatra::Base
     end
 
     def create_comment(product_id, user_id, content)
+      redis.incr("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{product_id}")
       db.xquery('INSERT INTO comments (product_id, user_id, content, created_at) VALUES (?, ?, ?, ?)', \
         product_id, user_id, content, time_now_db)
     end
@@ -111,7 +113,6 @@ class Ishocon1::WebApp < Sinatra::Base
   end
 
   get '/logout' do
-    session[:user_id] = nil
     session.clear
     redirect '/login'
   end
@@ -119,36 +120,37 @@ class Ishocon1::WebApp < Sinatra::Base
   get '/' do
     page = params[:page].to_i || 0
     limit = 50
+
     prd_max_id = db.xquery("SELECT MAX(id) AS id FROM products").first[:id].to_i
-    prd_ids_query = <<SQL
-SELECT id 
+    
+    prd_query = <<SQL
+SELECT
+  id,
+  name,
+  description,
+  image_path,
+  price,
+  created_at
 FROM products
 WHERE id > ?
   AND id <= ?
 ORDER BY id DESC
 SQL
-    product_ids = db.xquery(
-      prd_ids_query,
+    product_rows = db.xquery(prd_query, 
       prd_max_id - ((page + 1) * limit),
       prd_max_id - (page * limit),
-    ).map{|elem| elem[:id]}
-    
-    prd_query = <<SQL
-SELECT
-  prd.id,
-  prd.name,
-  prd.description,
-  prd.image_path,
-  prd.price,
-  prd.created_at,
-  COUNT(cmt.id) AS comments_count
-FROM products AS prd
-JOIN comments AS cmt ON prd.id = cmt.product_id
-WHERE prd.id IN (?)
-GROUP BY prd.id
-ORDER BY prd.id DESC
-SQL
-    products = db.xquery(prd_query, [product_ids])
+    )
+
+    product_ids = product_rows.map {|elem| elem[:id]}
+    pcc_key = product_ids.map do |id|
+      "#{PRODUCT_COMMENTS_COUNT_PREFIX}#{id}"
+    end
+    comment_counts = redis.mget(*pcc_key)
+
+    products = (product_rows.zip(comment_counts)).map do |elem|
+      elem[0][:comments_count] = elem[1]
+      elem[0]
+    end
     cmt_query = <<SQL
 SELECT product_id, name, content 
 FROM 
@@ -220,6 +222,16 @@ SQL
     users = db.query('SELECT id, email FROM users')
     users.each do |user|
       redis.set("#{USER_ID_KEY_PREFIX}#{user[:id]}", user[:email])
+    end
+
+    pcc_query =<<SQL
+SELECT product_id, COUNT(1) AS cnt
+FROM comments
+GROUP BY product_id
+SQL
+    product_comments_count = db.query(pcc_query)
+    product_comments_count.each do |pcc|
+      redis.set("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{pcc[:product_id]}", pcc[:cnt])
     end
 
     "Finish"
