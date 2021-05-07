@@ -4,6 +4,7 @@ require 'mysql2-cs-bind'
 require 'erubis'
 require 'rack/lineprof'
 require 'rack/session/redis'
+require 'redis'
 
 module Ishocon1
   class AuthenticationError < StandardError; end
@@ -11,11 +12,13 @@ module Ishocon1
 end
 
 class Ishocon1::WebApp < Sinatra::Base
-  use Rack::Session::Redis, redis_server: 'redis://localhost:6379', expires_in: 3600
+  use Rack::Session::Redis, redis_server: 'redis://localhost:6379/', expires_in: 3600
   use Rack::Lineprof
   set :erb, escape_html: true
   set :public_folder, File.expand_path('../public', __FILE__)
   set :protection, true
+
+  USER_ID_KEY_PREFIX = 'user_id_'
 
   helpers do
     def config
@@ -45,6 +48,13 @@ class Ishocon1::WebApp < Sinatra::Base
       client
     end
 
+    def redis
+      return Thread.current[:redis] if Thread.current[:redis]
+      redis = Redis.new
+      Thread.current[:redis] = redis
+      redis
+    end
+
     def time_now_db
       Time.now - 9 * 60 * 60
     end
@@ -60,7 +70,7 @@ class Ishocon1::WebApp < Sinatra::Base
     end
 
     def current_user
-      db.xquery('SELECT * FROM users WHERE id = ?', session[:user_id]).first
+      redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id]} : nil
     end
 
     def update_last_login(user_id)
@@ -211,6 +221,12 @@ SQL
     db.query('DELETE FROM products WHERE id > 10000')
     db.query('DELETE FROM comments WHERE id > 200000')
     db.query('DELETE FROM histories WHERE id > 500000')
+
+    users = db.query('SELECT id, email FROM users')
+    users.each do |user|
+      redis.set("#{USER_ID_KEY_PREFIX}#{user[:id]}", user[:email])
+    end
+
     "Finish"
   end
 end

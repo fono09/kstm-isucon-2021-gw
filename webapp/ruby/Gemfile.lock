@@ -51,6 +51,7 @@ DEPENDENCIES
   mysql2 (= 0.5.3)
   mysql2-cs-bind
   rack-lineprof
+  redis
   redis-rack
   sinatra
   unicorn
