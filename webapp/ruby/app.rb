@@ -218,20 +218,7 @@ SQL
   end
 
   get '/initialize' do
-    keys = redis.keys("#{USER_ID_KEY_PREFIX}*")
-    keys.each do |key|
-      redis.del(key)
-    end
-
-    keys = redis.keys("#{USER_BOUGHT_PREFIX}*")
-    keys.each do |key|
-      redis.del(key)
-    end
-
-    keys = redis.keys("#{PRODUCT_COMMENTS_COUNT_PREFIX}*")
-    keys.each do |key|
-      redis.del(key)
-    end
+    redis.flushall
 
     db.query('DELETE FROM users WHERE id > 5000')
     db.query('DELETE FROM products WHERE id > 10000')
