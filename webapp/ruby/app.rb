@@ -113,28 +113,59 @@ class Ishocon1::WebApp < Sinatra::Base
 
   get '/' do
     page = params[:page].to_i || 0
-    prd_max_id = db.xquery("SELECT MAX(id) AS id FROM products").first[:id]
-    prd_query = <<"SQL"
-SELECT *
+    limit = 50
+    prd_max_id = db.xquery("SELECT MAX(id) AS id FROM products").first[:id].to_i
+    prd_ids_query = <<SQL
+SELECT id 
 FROM products
-WHERE id BETWEEN #{prd_max_id - (page + 1) * 50}
-  AND #{prd_max_id - page * 50}
+WHERE id > ?
+  AND id <= ?
 ORDER BY id DESC
-LIMIT 50
 SQL
-    products = db.xquery(prd_query)
+    product_ids = db.xquery(
+      prd_ids_query,
+      prd_max_id - ((page + 1) * limit),
+      prd_max_id - (page * limit),
+    ).map{|elem| elem[:id]}
+    
+    prd_query = <<SQL
+SELECT
+  prd.id,
+  prd.name,
+  prd.description,
+  prd.image_path,
+  prd.price,
+  prd.created_at,
+  COUNT(cmt.id) AS comments_count
+FROM products AS prd
+JOIN comments AS cmt ON prd.id = cmt.product_id
+WHERE prd.id IN (?)
+GROUP BY prd.id
+ORDER BY prd.id DESC
+SQL
+    products = db.xquery(prd_query, [product_ids])
     cmt_query = <<SQL
-SELECT *
-FROM comments as c
-INNER JOIN users as u
-ON c.user_id = u.id
-WHERE c.product_id = ?
-ORDER BY c.created_at DESC
-LIMIT 5
+SELECT product_id, name, content 
+FROM 
+(
+  SELECT c2.id
+  FROM
+  (
+    SELECT ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at DESC) AS row_num, id
+    FROM comments as c
+    WHERE c.product_id IN (?)
+    ORDER BY c.created_at DESC
+  ) AS c2
+  WHERE row_num < 6 
+) AS c3
+JOIN comments AS c4
+  ON c3.id = c4.id
+JOIN users as u
+  ON c4.user_id = u.id
 SQL
-    cmt_count_query = 'SELECT count(*) as count FROM comments WHERE product_id = ?'
+    comments = db.xquery(cmt_query, product_ids).group_by{|cmt| cmt[:product_id]}
 
-    erb :index, locals: { products: products, cmt_query: cmt_query, cmt_count_query: cmt_count_query }
+    erb :index, locals: { products: products, comments: comments}
   end
 
   get '/users/:user_id' do
