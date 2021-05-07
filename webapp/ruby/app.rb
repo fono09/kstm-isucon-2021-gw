@@ -113,7 +113,16 @@ class Ishocon1::WebApp < Sinatra::Base
 
   get '/' do
     page = params[:page].to_i || 0
-    products = db.xquery("SELECT * FROM products ORDER BY id DESC LIMIT 50 OFFSET #{page * 50}")
+    prd_max_id = db.xquery("SELECT MAX(id) AS id FROM products").first[:id]
+    prd_query = <<"SQL"
+SELECT *
+FROM products
+WHERE id BETWEEN #{prd_max_id - (page + 1) * 50}
+  AND #{prd_max_id - page * 50}
+ORDER BY id DESC
+LIMIT 50
+SQL
+    products = db.xquery(prd_query)
     cmt_query = <<SQL
 SELECT *
 FROM comments as c
