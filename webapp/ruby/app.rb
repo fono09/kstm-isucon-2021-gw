@@ -59,7 +59,7 @@ class Ishocon1::WebApp < Sinatra::Base
 
     def redis
       return Thread.current[:redis] if Thread.current[:redis]
-      redis = Redis.new
+      redis = Redis.new(path: "/var/run/redis/redis-server.sock")
       Thread.current[:redis] = redis
       redis
     end
