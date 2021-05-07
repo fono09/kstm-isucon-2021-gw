@@ -9,7 +9,8 @@ CREATE TABLE `users` (
   `email` varchar(256) NOT NULL,
   `password` varchar(32) NOT NULL,
   `last_login` datetime NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  INDEX (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `products` (
