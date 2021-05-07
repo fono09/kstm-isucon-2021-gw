@@ -1,0 +1,1 @@
+./benchmark 2>&1 | grep "Score:" | sed -e 's/.*Score: \(\d*\)/\1/g' | xargs -I{} curl -X POST -d "{\"score\":{}, \"timestamp\":{ \".sv\":\"timestamp\" } }" "https://kstmisucon2021gw-default-rtdb.firebaseio.com/teams/fono09.json"
