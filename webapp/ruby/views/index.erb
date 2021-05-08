@@ -16,7 +16,7 @@
             <h4>価格</h4>
             <p><%= product[:price] %>円</p>
             <h4>商品説明</h4>
-            <p><%= product[:description][0..69] %>…</p>
+            <p><%= product[:short_description] %></p>
             <h4><%= product[:comments_count] %>件のレビュー</h4>
             <ul>
               <% product[:comments].each do |comment| %>

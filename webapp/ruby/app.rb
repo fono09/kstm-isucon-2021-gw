@@ -119,7 +119,9 @@ class Ishocon1::WebApp < Sinatra::Base
       product.keys.each do |key|
         new_hash[key.to_sym] = product[key]
       end
-      new_hash[:created_at] = Time.parse(new_hash[:created_at])
+      if new_hash[:created_at].is_a?(String) then
+        new_hash[:created_at] = Time.parse(new_hash[:created_at])
+      end
       new_hash
     end
   end
@@ -158,7 +160,16 @@ class Ishocon1::WebApp < Sinatra::Base
 
     results = redis.pipelined do
       product_ids.map do |id|
-          redis.hgetall("#{PRODUCT_PREFIX}#{id}")
+          redis.mapped_hmget(
+            "#{PRODUCT_PREFIX}#{id}",
+            'id',
+            'name',
+            'short_description',
+            'image_path',
+            'price',
+            'created_at',
+            'comments_count'
+          )
       end
     end
 
@@ -196,12 +207,24 @@ SQL
     total_pay = 0
     results = redis.pipelined do
       history.each_with_index do |h,i|
-        redis.hgetall("#{PRODUCT_PREFIX}#{h[:product_id]}")
+        redis.mapped_hmget(
+          "#{PRODUCT_PREFIX}#{h[:product_id]}",
+          'id',
+          'name',
+          'short_description',
+          'image_path',
+          'price',
+          'comments_count'
+        )
         break if i >= 30
       end
     end
-    products = results.map do |result|
-      product_str_to_sym(result)
+    products = results.map.with_index do |result, index|
+      product = product_str_to_sym(result)
+      product
+    end
+    products.zip(history) do |product, h|
+      product[:created_at] = h[:created_at]
     end
 
     paid_history = redis.pipelined do
@@ -291,6 +314,8 @@ SQL
           product[:name],
           "description",
           product[:description],
+          "short_description",
+          product[:description][0..69]+'…',
           "image_path",
           product[:image_path],
           "price",
