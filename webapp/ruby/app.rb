@@ -275,7 +275,14 @@ SQL
 
   get '/products/:product_id' do
     cache_control :public
-    product = db.xquery('SELECT * FROM products WHERE id = ?', params[:product_id]).first
+    product = product_str_to_sym(redis.mapped_hmget(
+      "#{PRODUCT_PREFIX}#{params[:product_id]}",
+      'id',
+      'name',
+      'image_path',
+      'price',
+      'description'
+    ))
     erb :product, locals: { product: product }
   end
 
@@ -396,6 +403,7 @@ SQL
           redis.lpush("#{LATEST_COMMENT_CONTENT_PREFIX}#{comment[:product_id]}", comment[:content])
       end
     end
+
     "Finish"
   end
 end
