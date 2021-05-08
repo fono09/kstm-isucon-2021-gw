@@ -185,20 +185,31 @@ class Ishocon1::WebApp < Sinatra::Base
 
   get '/users/:user_id' do
     cache_control :public
-    products_query = <<SQL
-SELECT p.id, p.name, p.description, p.image_path, p.price, h.created_at
+    history_query =<<SQL
+SELECT h.product_id, h.created_at
 FROM histories as h
-LEFT OUTER JOIN products as p
-ON h.product_id = p.id
 WHERE h.user_id = ?
 ORDER BY h.id DESC
 SQL
-    products = db.xquery(products_query, params[:user_id])
+    history = db.xquery(history_query, params[:user_id])
 
     total_pay = 0
-    products.each do |product|
-      total_pay += product[:price]
+    results = redis.pipelined do
+      history.each_with_index do |h,i|
+        redis.hgetall("#{PRODUCT_PREFIX}#{h[:product_id]}")
+        break if i >= 30
+      end
     end
+    products = results.map do |result|
+      product_str_to_sym(result)
+    end
+
+    paid_history = redis.pipelined do
+      history.each do |h|
+        redis.hget("#{PRODUCT_PREFIX}#{h[:product_id]}", 'price')
+      end
+    end
+    total_pay = paid_history.map(&:to_i).inject(:+)
 
     user = db.xquery('SELECT * FROM users WHERE id = ?', params[:user_id]).first
     erb :mypage, locals: { products: products, user: user, total_pay: total_pay }
