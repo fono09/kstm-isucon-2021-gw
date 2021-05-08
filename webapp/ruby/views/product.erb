@@ -4,6 +4,7 @@
     <% if already_bought?(product[:id]) %><h4>あなたはすでにこの商品を買っています</h4><% end %>
   </div>
 </div>
+<% cache "cache_product_#{product[:id]}" do %>
 <div class="container">
   <div class="row">
     <div class="jumbotron">
@@ -15,3 +16,4 @@
     </div>
   </div>
 </div>
+<% end %>

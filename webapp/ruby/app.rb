@@ -124,6 +124,41 @@ class Ishocon1::WebApp < Sinatra::Base
       end
       new_hash
     end
+
+		# https://gist.github.com/bryanthompson/277560
+		# 部分キャッシュここから
+		def cache(name, &block)
+			if cache = read_fragment(name)
+				@_out_buf << cache
+			else
+				pos = @_out_buf.length
+				tmp = block.call
+				write_fragment(name, tmp[pos..-1])
+			end        
+		end
+
+		def read_fragment(name)
+			cache_file = "/tmp/sinatra_cache/#{name}.cache"
+			now = Time.now
+			if File.file?(cache_file)
+				return File.read(cache_file)
+			end
+			false
+		end
+
+		def write_fragment(name, buf)
+			cache_file = "/tmp/sinatra_cache/#{name}.cache"
+			f = File.new(cache_file, "w+")
+			f.write(buf)
+			f.close
+			buf
+		end
+
+		#独自拡張
+		def remove_fragment(name)
+			cache_file = "/tmp/sinatra_cache/#{name}.cache"
+		end
+		# 部分キャッシュここまで
   end
 
   error Ishocon1::AuthenticationError do
@@ -262,6 +297,12 @@ SQL
     db.query('DELETE FROM products WHERE id > 10000')
     db.query('DELETE FROM comments WHERE id > 200000')
     db.query('DELETE FROM histories WHERE id > 500000')
+
+
+    Dir.foreach('/tmp/sinatra_cache') do |f|
+      fn = File.join('/tmp/sinatra_cache', f)
+      File.delete(fn) if f != '.' && f != '..'
+    end
 
     redis.flushall
 
