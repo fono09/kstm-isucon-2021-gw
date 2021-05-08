@@ -201,8 +201,7 @@ SQL
   get '/products/:product_id' do
     cache_control :public
     product = db.xquery('SELECT * FROM products WHERE id = ?', params[:product_id]).first
-    comments = db.xquery('SELECT * FROM comments WHERE product_id = ?', params[:product_id])
-    erb :product, locals: { product: product, comments: comments }
+    erb :product, locals: { product: product }
   end
 
   post '/products/buy/:product_id' do
