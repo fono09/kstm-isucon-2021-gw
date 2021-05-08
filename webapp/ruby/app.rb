@@ -12,6 +12,7 @@ module Ishocon1
 end
 
 class Ishocon1::WebApp < Sinatra::Base
+  enable :logging
   use Rack::Session::Redis, redis_server: 'redis://localhost:6379/', expires_in: 3600
   use Rack::Lineprof
   set :erb, escape_html: true
@@ -22,7 +23,11 @@ class Ishocon1::WebApp < Sinatra::Base
 
   USER_ID_KEY_PREFIX = 'user_id_'
   USER_BOUGHT_PREFIX = 'user_bought_'
-  PRODUCT_COMMENTS_COUNT_PREFIX = 'product_comments_count_'
+
+  LATEST_COMMENT_NAME_PREFIX = 'lastest_comment_name_'
+  LATEST_COMMENT_CONTENT_PREFIX = 'lastest_comment_content_'
+  
+  PRODUCT_PREFIX = 'product_'
 
   helpers do
     def config
@@ -67,6 +72,7 @@ class Ishocon1::WebApp < Sinatra::Base
       user = db.xquery('SELECT * FROM users WHERE email = ?', email).first
       fail Ishocon1::AuthenticationError unless user.nil? == false && user[:password] == password
       session[:user_id] = user[:id]
+      session[:user_name] = user[:name]
     end
 
     def authenticated!
@@ -74,13 +80,13 @@ class Ishocon1::WebApp < Sinatra::Base
     end
 
     def current_user
-      redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id]} : nil
+      redis.exists?("#{USER_ID_KEY_PREFIX}#{session[:user_id]}") ? {id: session[:user_id], name: session[:user_name]} : nil
     end
 
     def buy_product(product_id, user_id)
       redis.hincrby("#{USER_BOUGHT_PREFIX}#{user_id}", product_id, 1)
       db.xquery('INSERT INTO histories (product_id, user_id, created_at) VALUES (?, ?, ?)', \
-        product_id, user_id, time_now_db)
+            product_id, user_id, time_now_db)
     end
 
     def already_bought?(product_id)
@@ -88,10 +94,33 @@ class Ishocon1::WebApp < Sinatra::Base
       redis.hexists("#{USER_BOUGHT_PREFIX}#{current_user[:id]}", product_id)
     end
 
-    def create_comment(product_id, user_id, content)
-      redis.incr("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{product_id}")
-      db.xquery('INSERT INTO comments (product_id, user_id, content, created_at) VALUES (?, ?, ?, ?)', \
-        product_id, user_id, content, time_now_db)
+    def create_comment(product_id, user_id, user_name, content)
+      content = content.size > 25 ? content[0..24]+'…' : content
+
+      redis.watch(
+        "#{LATEST_COMMENT_NAME_PREFIX}#{product_id}",
+        "#{LATEST_COMMENT_CONTENT_PREFIX}#{product_id}"
+      ) do
+        exec_trim = redis.llen("#{LATEST_COMMENT_NAME_PREFIX}#{product_id}") >= 5
+        result = redis.multi do |multi|
+            redis.hincrby("#{PRODUCT_PREFIX}#{product_id}", 'comments_count', 1)
+            redis.lpush("#{LATEST_COMMENT_NAME_PREFIX}#{product_id}", user_name)
+            redis.lpush("#{LATEST_COMMENT_CONTENT_PREFIX}#{product_id}", content)
+            if exec_trim then
+              redis.ltrim("#{LATEST_COMMENT_NAME_PREFIX}#{product_id}", 0, 4)
+              redis.ltrim("#{LATEST_COMMENT_CONTENT_PREFIX}#{product_id}", 0, 4)
+            end
+        end
+      end
+    end
+
+    def product_str_to_sym(product)
+      new_hash = {}
+      product.keys.each do |key|
+        new_hash[key.to_sym] = product[key]
+      end
+      new_hash[:created_at] = Time.parse(new_hash[:created_at])
+      new_hash
     end
   end
 
@@ -125,56 +154,33 @@ class Ishocon1::WebApp < Sinatra::Base
     limit = 50
 
     
-    prd_query = <<SQL
-SELECT
-  id,
-  name,
-  description,
-  image_path,
-  price,
-  created_at
-FROM products
-WHERE id > ?
-  AND id <= ?
-ORDER BY id DESC
-SQL
-    product_rows = db.xquery(prd_query, 
-      PRD_MAX_ID - ((page + 1) * limit),
-      PRD_MAX_ID - (page * limit),
-    )
+    product_ids = ((PRD_MAX_ID - ((page + 1) * limit) + 1)..(PRD_MAX_ID - (page * limit))).to_a.reverse
 
-    product_ids = product_rows.map {|elem| elem[:id]}
-    pcc_key = product_ids.map do |id|
-      "#{PRODUCT_COMMENTS_COUNT_PREFIX}#{id}"
+    results = redis.pipelined do
+      product_ids.map do |id|
+          redis.hgetall("#{PRODUCT_PREFIX}#{id}")
+      end
     end
-    comment_counts = redis.mget(*pcc_key)
 
-    products = (product_rows.zip(comment_counts)).map do |elem|
-      elem[0][:comments_count] = elem[1]
-      elem[0]
+    products = results.map do |result|
+      new_hash = product_str_to_sym(result)
+
+      multi_result = redis.multi do |multi|
+        multi.lrange("#{LATEST_COMMENT_NAME_PREFIX}#{new_hash[:id]}", 0, -1)
+        multi.lrange("#{LATEST_COMMENT_CONTENT_PREFIX}#{new_hash[:id]}", 0, -1)
+      end
+      comment_names = multi_result[0]
+      comment_contents = multi_result[1]
+      
+      new_hash[:comments] = []
+      comment_names.zip(comment_contents) do |name, content|
+        new_hash[:comments].push({name: name, content: content})
+      end
+
+      new_hash
     end
-    cmt_query = <<SQL
-SELECT product_id, name, content 
-FROM 
-(
-  SELECT c2.id
-  FROM
-  (
-    SELECT ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at DESC) AS row_num, id
-    FROM comments as c
-    WHERE c.product_id IN (?)
-    ORDER BY c.created_at DESC
-  ) AS c2
-  WHERE row_num < 6 
-) AS c3
-JOIN comments AS c4
-  ON c3.id = c4.id
-JOIN users as u
-  ON c4.user_id = u.id
-SQL
-    comments = db.xquery(cmt_query, product_ids).group_by{|cmt| cmt[:product_id]}
 
-    erb :index, locals: { products: products, comments: comments}
+    erb :index, locals: { products: products }
   end
 
   get '/users/:user_id' do
@@ -212,31 +218,22 @@ SQL
 
   post '/comments/:product_id' do
     authenticated!
-    create_comment(params[:product_id], current_user[:id], params[:content])
+    create_comment(params[:product_id], current_user[:id], current_user[:name], params[:content])
     redirect "/users/#{current_user[:id]}"
   end
 
   get '/initialize' do
-    redis.flushall
 
     db.query('DELETE FROM users WHERE id > 5000')
     db.query('DELETE FROM products WHERE id > 10000')
     db.query('DELETE FROM comments WHERE id > 200000')
     db.query('DELETE FROM histories WHERE id > 500000')
 
+    redis.flushall
+
     users = db.query('SELECT id, email FROM users')
     users.each do |user|
       redis.set("#{USER_ID_KEY_PREFIX}#{user[:id]}", user[:email])
-    end
-
-    pcc_query =<<SQL
-SELECT product_id, COUNT(1) AS cnt
-FROM comments
-GROUP BY product_id
-SQL
-    product_comments_count = db.query(pcc_query)
-    product_comments_count.each do |pcc|
-      redis.set("#{PRODUCT_COMMENTS_COUNT_PREFIX}#{pcc[:product_id]}", pcc[:cnt])
     end
 
     bought_query =<<SQL
@@ -257,6 +254,71 @@ SQL
       )
     end
 
+    products_query = <<SQL
+SELECT
+  p.id,
+  p.name,
+  p.description,
+  p.image_path,
+  p.price,
+  p.created_at,
+  COUNT(c.id) AS comments_count
+FROM
+  products AS p
+JOIN comments AS c
+  ON c.product_id = p.id
+GROUP BY p.id
+SQL
+    products = db.xquery(products_query)
+    redis.multi do |multi|
+      products.each do |product|
+        multi.hset(
+          "#{PRODUCT_PREFIX}#{product[:id]}",
+          "id",
+          product[:id],
+          "name",
+          product[:name],
+          "description",
+          product[:description],
+          "image_path",
+          product[:image_path],
+          "price",
+          product[:price],
+          "created_at",
+          product[:created_at],
+          "comments_count",
+          product[:comments_count]
+      )
+      end
+    end
+    
+    cmt_query = <<SQL
+SELECT product_id, name, content 
+FROM 
+(
+  SELECT c2.id, row_num
+  FROM
+  (
+    SELECT ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at DESC) AS row_num, id
+    FROM comments as c
+    ORDER BY c.created_at DESC
+  ) AS c2
+  WHERE row_num < 6 
+) AS c3
+JOIN comments AS c4
+  ON c3.id = c4.id
+JOIN users as u
+  ON c4.user_id = u.id
+ORDER BY row_num
+SQL
+    comments = db.xquery(cmt_query).each 
+    redis.multi do |multi|
+      comments.each do |comment|
+          comment[:content] = comment[:content].size > 25 ? comment[:content][0..24]+'…' : comment[:content]
+          redis.lpush("#{LATEST_COMMENT_NAME_PREFIX}#{comment[:product_id]}", comment[:name])
+          redis.lpush("#{LATEST_COMMENT_CONTENT_PREFIX}#{comment[:product_id]}", comment[:content])
+      end
+    end
     "Finish"
   end
 end

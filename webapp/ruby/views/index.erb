@@ -19,8 +19,8 @@
             <p><%= product[:description][0..69] %>…</p>
             <h4><%= product[:comments_count] %>件のレビュー</h4>
             <ul>
-              <% comments[product[:id]].each do |comment| %>
-                <li><%= comment[:content].size > 25 ? "#{comment[:content][0..24]}…" : comment[:content] %> by <%= comment[:name] %></li>
+              <% product[:comments].each do |comment| %>
+                <li><%= comment[:content] %> by <%= comment[:name] %></li>
               <% end %>
             </ul>
           </div>
